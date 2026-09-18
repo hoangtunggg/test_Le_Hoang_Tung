@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import type { QueryClient, UseMutationOptions } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { queryClient } from "@/lib/queryClient";
@@ -31,6 +32,15 @@ interface UpdateTodoRequest {
   completed?: boolean;
 }
 
+interface UpdateTodoVariables {
+  id: string;
+  data: UpdateTodoRequest;
+}
+
+interface UpdateTodoContext {
+  previousTodos: TodoListResponse | undefined;
+}
+
 
 export function useTodos(page: number = 1, size: number = 10000) {
   return useQuery({
@@ -61,28 +71,27 @@ export function useCreateTodo() {
 }
 
 
-export function useUpdateTodo() {
-  return useMutation({
+export function createUpdateTodoMutationOptions(
+  client: QueryClient = queryClient
+): UseMutationOptions<Todo, unknown, UpdateTodoVariables, UpdateTodoContext> {
+  return {
     mutationFn: async ({
       id,
       data,
-    }: {
-      id: string;
-      data: UpdateTodoRequest;
-    }): Promise<Todo> => {
+    }: UpdateTodoVariables): Promise<Todo> => {
       const response = await api.put(`/todos/${id}`, data);
       return response.data;
     },
     onMutate: async ({ id, data }) => {
       // Cancel outgoing queries
-      await queryClient.cancelQueries({ queryKey: ["todos"] });
+      await client.cancelQueries({ queryKey: ["todos"] });
 
       // Snapshot previous value
-      const previousTodos = queryClient.getQueryData<TodoListResponse>(["todos"]);
+      const previousTodos = client.getQueryData<TodoListResponse>(["todos"]);
 
       // Optimistically update
       if (previousTodos) {
-        queryClient.setQueryData<TodoListResponse>(["todos"], {
+        client.setQueryData<TodoListResponse>(["todos"], {
           ...previousTodos,
           items: previousTodos.items.map((todo) =>
             todo.id === id ? { ...todo, ...data } : todo
@@ -94,14 +103,18 @@ export function useUpdateTodo() {
     },
     onError: (_error, _variables, context) => {
       if (context?.previousTodos) {
-        queryClient.setQueryData(["todos"], context.previousTodos);
+        client.setQueryData(["todos"], context.previousTodos);
       }
       toast.error("Failed to update todo");
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["todos"] });
+      client.invalidateQueries({ queryKey: ["todos"] });
     },
-  });
+  };
+}
+
+export function useUpdateTodo() {
+  return useMutation(createUpdateTodoMutationOptions());
 }
 
 export function useDeleteTodo() {
