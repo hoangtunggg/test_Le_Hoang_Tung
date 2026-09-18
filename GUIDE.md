@@ -64,6 +64,12 @@ The application will be available at:
   - Email: `demo@test.com`
   - Password: `Demo@123`
 
+`FRONTEND_API_URL` is public browser configuration that Docker Compose passes
+to Vite while building the frontend image. After changing it in the root
+`.env`, rebuild the frontend image with `docker compose build frontend` (or
+rerun `docker compose up --build`); changing a running container's environment
+cannot rewrite an already-built Vite bundle.
+
 PostgreSQL and Redis are exposed to the host on loopback only. Redis requires
 the password configured in `.env`. Compose injects operational secrets at
 container runtime; they are not baked into either application image.
@@ -110,6 +116,7 @@ uvicorn app.main:app --reload --port 8000
 cd frontend
 npm install
 cp .env.example .env
+# Set VITE_API_URL before starting Vite if the API is not on localhost:8000.
 npm run dev
 ```
 
