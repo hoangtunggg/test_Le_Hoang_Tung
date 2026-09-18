@@ -169,10 +169,14 @@ pytest tests/ -v
 ```
 
 ### Frontend E2E Tests (Playwright)
-Once set up, run your Playwright suite against the running frontend:
+With the Docker services running, run the Playwright suite from the frontend directory:
 ```bash
-# In your E2E / frontend directory:
+# Headless (default)
+cd frontend
 npx playwright test
+
+# Headed
+npx playwright test --headed
 ```
 
 ### Database Performance Benchmarking
@@ -184,4 +188,3 @@ Connect to PostgreSQL container to run `EXPLAIN ANALYZE`:
 ```bash
 docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
-
