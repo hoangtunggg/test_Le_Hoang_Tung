@@ -299,9 +299,10 @@ async def test_non_owner_cannot_read_update_or_delete_todos(client: AsyncClient)
         "delete": foreign_delete.status_code,
     } == {"read": 404, "update": 404, "delete": 404}
 
-    for todo_id in todo_ids:
+    for todo_id, operation in zip(todo_ids, ("read", "update", "delete"), strict=True):
         owner_read = await client.get(f"/api/v1/todos/{todo_id}", headers=owner_headers)
         assert owner_read.status_code == 200
+        assert owner_read.json()["title"] == f"Private {operation}"
 
 
 @pytest.mark.asyncio
@@ -362,16 +363,18 @@ async def test_todo_list_cache_is_isolated_by_page_size(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_create_invalidates_cached_todo_list(client: AsyncClient):
+async def test_create_invalidates_cached_todo_list(client: AsyncClient, redis_client):
     token = await get_auth_token(client, "cache-create@example.com")
     headers = {"Authorization": f"Bearer {token}"}
 
     cached = await client.get("/api/v1/todos", headers=headers)
+    assert len(redis_client.data) == 1
     created = await client.post(
         "/api/v1/todos",
         json={"title": "Created after cache"},
         headers=headers,
     )
+    assert redis_client.data == {}
     refreshed = await client.get("/api/v1/todos", headers=headers)
 
     assert cached.json()["items"] == []
@@ -382,7 +385,7 @@ async def test_create_invalidates_cached_todo_list(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_invalidates_cached_todo_list(client: AsyncClient):
+async def test_update_invalidates_cached_todo_list(client: AsyncClient, redis_client):
     token = await get_auth_token(client, "cache-update@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     created = await client.post(
@@ -392,12 +395,14 @@ async def test_update_invalidates_cached_todo_list(client: AsyncClient):
     )
     todo_id = created.json()["id"]
     await client.get("/api/v1/todos", headers=headers)
+    assert len(redis_client.data) == 1
 
     updated = await client.put(
         f"/api/v1/todos/{todo_id}",
         json={"title": "After update"},
         headers=headers,
     )
+    assert redis_client.data == {}
     refreshed = await client.get("/api/v1/todos", headers=headers)
 
     assert updated.status_code == 200
@@ -405,7 +410,7 @@ async def test_update_invalidates_cached_todo_list(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_delete_invalidates_cached_todo_list(client: AsyncClient):
+async def test_delete_invalidates_cached_todo_list(client: AsyncClient, redis_client):
     token = await get_auth_token(client, "cache-delete@example.com")
     headers = {"Authorization": f"Bearer {token}"}
     created = await client.post(
@@ -415,8 +420,10 @@ async def test_delete_invalidates_cached_todo_list(client: AsyncClient):
     )
     todo_id = created.json()["id"]
     cached = await client.get("/api/v1/todos", headers=headers)
+    assert len(redis_client.data) == 1
 
     deleted = await client.delete(f"/api/v1/todos/{todo_id}", headers=headers)
+    assert redis_client.data == {}
     refreshed = await client.get("/api/v1/todos", headers=headers)
 
     assert len(cached.json()["items"]) == 1
