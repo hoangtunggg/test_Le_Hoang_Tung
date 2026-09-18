@@ -359,3 +359,138 @@ async def test_todo_list_cache_is_isolated_by_page_size(client: AsyncClient):
     assert len(size_one.json()["items"]) == 1
     assert size_two.json()["size"] == 2
     assert len(size_two.json()["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_invalidates_cached_todo_list(client: AsyncClient):
+    token = await get_auth_token(client, "cache-create@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    cached = await client.get("/api/v1/todos", headers=headers)
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Created after cache"},
+        headers=headers,
+    )
+    refreshed = await client.get("/api/v1/todos", headers=headers)
+
+    assert cached.json()["items"] == []
+    assert created.status_code == 201
+    assert [item["title"] for item in refreshed.json()["items"]] == [
+        "Created after cache"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_invalidates_cached_todo_list(client: AsyncClient):
+    token = await get_auth_token(client, "cache-update@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Before update"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+    await client.get("/api/v1/todos", headers=headers)
+
+    updated = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"title": "After update"},
+        headers=headers,
+    )
+    refreshed = await client.get("/api/v1/todos", headers=headers)
+
+    assert updated.status_code == 200
+    assert [item["title"] for item in refreshed.json()["items"]] == ["After update"]
+
+
+@pytest.mark.asyncio
+async def test_delete_invalidates_cached_todo_list(client: AsyncClient):
+    token = await get_auth_token(client, "cache-delete@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Delete after cache"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+    cached = await client.get("/api/v1/todos", headers=headers)
+
+    deleted = await client.delete(f"/api/v1/todos/{todo_id}", headers=headers)
+    refreshed = await client.get("/api/v1/todos", headers=headers)
+
+    assert len(cached.json()["items"]) == 1
+    assert deleted.status_code == 204
+    assert refreshed.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_mutation_invalidates_all_user_pagination_variants(
+    client: AsyncClient, redis_client
+):
+    token = await get_auth_token(client, "cache-variants@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created_todos = []
+    for title in ("Variant one", "Variant two"):
+        created = await client.post(
+            "/api/v1/todos", json={"title": title}, headers=headers
+        )
+        created_todos.append(created.json())
+
+    for query in ("page=1&size=1", "page=2&size=1", "page=1&size=2"):
+        await client.get(f"/api/v1/todos?{query}", headers=headers)
+
+    user_id = created_todos[0]["user_id"]
+    user_cache_prefix = f"todos:list:user:{user_id}:"
+    assert (
+        len([key for key in redis_client.data if key.startswith(user_cache_prefix)])
+        == 3
+    )
+
+    await client.put(
+        f"/api/v1/todos/{created_todos[0]['id']}",
+        json={"title": "Variant updated"},
+        headers=headers,
+    )
+
+    assert not any(key.startswith(user_cache_prefix) for key in redis_client.data)
+
+
+@pytest.mark.asyncio
+async def test_user_mutation_preserves_other_users_cache(
+    client: AsyncClient, redis_client
+):
+    user_a_token = await get_auth_token(client, "cache-mutation-a@example.com")
+    user_b_token = await get_auth_token(client, "cache-mutation-b@example.com")
+    user_a_headers = {"Authorization": f"Bearer {user_a_token}"}
+    user_b_headers = {"Authorization": f"Bearer {user_b_token}"}
+    user_a_todo = await client.post(
+        "/api/v1/todos", json={"title": "User A cached"}, headers=user_a_headers
+    )
+    user_b_todo = await client.post(
+        "/api/v1/todos", json={"title": "User B cached"}, headers=user_b_headers
+    )
+    await client.get("/api/v1/todos", headers=user_a_headers)
+    await client.get("/api/v1/todos", headers=user_b_headers)
+
+    user_a_prefix = f"todos:list:user:{user_a_todo.json()['user_id']}:"
+    user_b_prefix = f"todos:list:user:{user_b_todo.json()['user_id']}:"
+    user_b_cache = {
+        key: value
+        for key, value in redis_client.data.items()
+        if key.startswith(user_b_prefix)
+    }
+    assert user_b_cache
+
+    await client.put(
+        f"/api/v1/todos/{user_a_todo.json()['id']}",
+        json={"title": "User A changed"},
+        headers=user_a_headers,
+    )
+
+    assert not any(key.startswith(user_a_prefix) for key in redis_client.data)
+    assert {
+        key: value
+        for key, value in redis_client.data.items()
+        if key.startswith(user_b_prefix)
+    } == user_b_cache

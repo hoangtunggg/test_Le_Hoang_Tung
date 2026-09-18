@@ -1,6 +1,7 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator
+from fnmatch import fnmatchcase
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -62,8 +63,16 @@ class InMemoryRedis:
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.data[key] = value
 
-    async def delete(self, key: str) -> None:
-        self.data.pop(key, None)
+    async def delete(self, *keys: str) -> int:
+        deleted = 0
+        for key in keys:
+            if self.data.pop(key, None) is not None:
+                deleted += 1
+        return deleted
+
+    async def delete_pattern(self, pattern: str) -> int:
+        keys = [key for key in self.data if fnmatchcase(key, pattern)]
+        return await self.delete(*keys)
 
     async def exists(self, key: str) -> bool:
         return key in self.data

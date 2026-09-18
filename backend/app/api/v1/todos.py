@@ -27,6 +27,13 @@ def todo_list_cache_key(user_id: uuid.UUID, page: int, size: int) -> str:
     return f"todos:list:user:{user_id}:page:{page}:size:{size}"
 
 
+async def commit_and_invalidate_todo_lists(
+    db: AsyncSession, redis: RedisClient, user_id: uuid.UUID
+) -> None:
+    await db.commit()
+    await redis.delete_pattern(f"todos:list:user:{user_id}:*")
+
+
 @router.get("", response_model=TodoListResponse)
 async def list_todos(
     page: int = Query(1, ge=1),
@@ -83,9 +90,11 @@ async def create_new_todo(
     todo_data: TodoCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis),
 ):
     """Create a new todo item."""
     todo = await create_todo(db, todo_data, current_user.id)
+    await commit_and_invalidate_todo_lists(db, redis, current_user.id)
     return todo
 
 
@@ -124,6 +133,7 @@ async def update_existing_todo(
 
     update_data = todo_data.model_dump(exclude_unset=True)
     updated_todo = await update_todo(db, todo, update_data)
+    await commit_and_invalidate_todo_lists(db, redis, current_user.id)
 
     return updated_todo
 
@@ -144,5 +154,6 @@ async def delete_existing_todo(
         )
 
     await delete_todo(db, todo)
+    await commit_and_invalidate_todo_lists(db, redis, current_user.id)
 
     return None
