@@ -1,18 +1,18 @@
 import asyncio
 import os
+import random
 import sys
 import time
 import uuid
 from datetime import datetime, timezone
-import random
 
-from sqlalchemy import select, insert
 from faker import Faker
+from sqlalchemy import func, insert, select
 
-from app.db.session import async_session_maker
-from app.models.user import User
-from app.models.todo import Todo
 from app.core.security import get_password_hash
+from app.db.session import async_session_maker
+from app.models.todo import Todo
+from app.models.user import User
 
 DEMO_EMAIL = "demo@test.com"
 DEMO_PASSWORD = "Demo@123"
@@ -20,6 +20,7 @@ TARGET_USERS = max(1, int(os.getenv("SEED_USERS", "100")))
 TARGET_TODOS = max(0, int(os.getenv("SEED_TODOS", "1000")))
 USER_BATCH_SIZE = max(1, int(os.getenv("SEED_USER_BATCH_SIZE", "500")))
 TODO_BATCH_SIZE = max(1, int(os.getenv("SEED_TODO_BATCH_SIZE", "5000")))
+RANDOM_SEED = int(os.getenv("SEED_RANDOM_SEED", "0"))
 
 
 async def seed_db():
@@ -28,17 +29,19 @@ async def seed_db():
     start_time = time.time()
 
     async with async_session_maker() as session:
-        # 1. Hashing password once to avoid huge performance penalty
-        print("Generating password hash...")
-        shared_password_hash = get_password_hash(DEMO_PASSWORD)
-
-        # 2. Check and seed demo user
+        # Targets are minimum totals. Existing rows above a target are preserved.
+        count_result = await session.execute(select(func.count()).select_from(User))
+        user_count = count_result.scalar_one()
         result = await session.execute(select(User).where(User.email == DEMO_EMAIL))
         demo_user = result.scalar_one_or_none()
 
-        all_user_ids = []
+        if user_count < TARGET_USERS:
+            print("Generating password hash...")
+            shared_password_hash = get_password_hash(DEMO_PASSWORD)
+            user_fake = Faker()
+            user_fake.seed_instance(RANDOM_SEED)
 
-        if not demo_user:
+        if not demo_user and user_count < TARGET_USERS:
             print(f"Creating demo user: {DEMO_EMAIL}...")
             demo_user = User(
                 id=uuid.uuid4(),
@@ -48,18 +51,10 @@ async def seed_db():
             session.add(demo_user)
             await session.commit()
             await session.refresh(demo_user)
+            user_count += 1
             print("Demo user created.")
-        else:
+        elif demo_user:
             print(f"Demo user {DEMO_EMAIL} already exists.")
-
-        all_user_ids.append(demo_user.id)
-
-        # Check if we need to seed the other users
-        # Check count of users
-        from sqlalchemy import func
-
-        count_result = await session.execute(select(func.count()).select_from(User))
-        user_count = count_result.scalar_one()
 
         if user_count < TARGET_USERS:
             users_to_create = TARGET_USERS - user_count
@@ -67,7 +62,6 @@ async def seed_db():
                 f"Current user count is {user_count}. "
                 f"Seeding {users_to_create} more users..."
             )
-            fake = Faker()
 
             # To ensure emails are unique
             existing_emails_result = await session.execute(select(User.email))
@@ -76,13 +70,12 @@ async def seed_db():
             users_batch = []
 
             for i in range(1, users_to_create + 1):
-                email = fake.unique.email()
+                email = user_fake.unique.email()
                 while email in existing_emails:
-                    email = fake.unique.email()
+                    email = user_fake.unique.email()
                 existing_emails.add(email)
 
                 user_id = uuid.uuid4()
-                all_user_ids.append(user_id)
                 users_batch.append(
                     {
                         "id": user_id,
@@ -98,68 +91,71 @@ async def seed_db():
                     print(f"Inserted {len(users_batch)} users...")
                     users_batch = []
         else:
-            print("Users already seeded. Retrieving user IDs...")
-            all_users_result = await session.execute(select(User.id))
-            all_user_ids = list(all_users_result.scalars().all())
+            print(f"User target already met with {user_count} users.")
 
-        # 3. Seed TODOs randomly distributed across users
-        if TARGET_TODOS == 0:
-            print("SEED_TODOS is 0. Skipping TODO seeding.")
-            return
+        # Always reload every user so existing users participate in distribution.
+        all_users_result = await session.execute(select(User.id).order_by(User.id))
+        all_user_ids = list(all_users_result.scalars().all())
 
-        # Check if todos already exist
-        result = await session.execute(select(Todo).limit(1))
-        has_todos = result.scalar_one_or_none() is not None
+        # 3. Seed TODOs evenly across all users with reproducible fake content
+        count_result = await session.execute(select(func.count()).select_from(Todo))
+        todo_count = count_result.scalar_one()
+        todos_to_create = max(0, TARGET_TODOS - todo_count)
 
-        if has_todos:
-            print("Database already contains TODOs. Skipping TODO seeding.")
-            return
+        if todos_to_create == 0:
+            print(f"TODO target already met with {todo_count} TODOs.")
+        else:
+            print("Pre-generating fake data pools for high performance...")
+            todo_fake = Faker()
+            todo_fake.seed_instance(RANDOM_SEED + 1)
+            rng = random.Random(RANDOM_SEED)
+            titles = [
+                todo_fake.sentence(nb_words=rng.randint(3, 8)).rstrip(".")
+                for _ in range(2000)
+            ]
+            descriptions = [todo_fake.text(max_nb_chars=150) for _ in range(2000)]
 
-        print("Pre-generating fake data pools for high performance...")
-        fake = Faker()
-        titles = [
-            fake.sentence(nb_words=random.randint(3, 8)).rstrip(".")
-            for _ in range(2000)
-        ]
-        descriptions = [fake.text(max_nb_chars=150) for _ in range(2000)]
+            total_batches = (todos_to_create + TODO_BATCH_SIZE - 1) // TODO_BATCH_SIZE
 
-        total_batches = (TARGET_TODOS + TODO_BATCH_SIZE - 1) // TODO_BATCH_SIZE
-
-        print(
-            f"Seeding {TARGET_TODOS} TODOs distributed "
-            f"across {len(all_user_ids)} users..."
-        )
-
-        for batch_offset in range(0, TARGET_TODOS, TODO_BATCH_SIZE):
-            batch_started_at = time.time()
-            batch_idx = batch_offset // TODO_BATCH_SIZE
-            batch_count = min(TODO_BATCH_SIZE, TARGET_TODOS - batch_offset)
-            todos_batch = []
-            for _ in range(batch_count):
-                now = datetime.now(timezone.utc)
-                todos_batch.append(
-                    {
-                        "id": uuid.uuid4(),
-                        "title": random.choice(titles),
-                        "description": random.choice(descriptions),
-                        "completed": random.choice([True, False]),
-                        "user_id": random.choice(all_user_ids),
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                )
-
-            # Perform bulk insert
-            await session.execute(insert(Todo), todos_batch)
-            await session.commit()
-
-            batch_elapsed = time.time() - batch_started_at
-            inserted_count = min((batch_idx + 1) * TODO_BATCH_SIZE, TARGET_TODOS)
             print(
-                f"Batch {batch_idx + 1}/{total_batches} "
-                f"inserted ({inserted_count} total). "
-                f"Time: {batch_elapsed:.2f}s"
+                f"Seeding {todos_to_create} additional TODOs distributed "
+                f"across {len(all_user_ids)} users..."
             )
+
+            for batch_offset in range(0, todos_to_create, TODO_BATCH_SIZE):
+                batch_started_at = time.time()
+                batch_idx = batch_offset // TODO_BATCH_SIZE
+                batch_count = min(TODO_BATCH_SIZE, todos_to_create - batch_offset)
+                todos_batch = []
+                for item_offset in range(batch_count):
+                    now = datetime.now(timezone.utc)
+                    absolute_offset = todo_count + batch_offset + item_offset
+                    todos_batch.append(
+                        {
+                            "id": uuid.uuid4(),
+                            "title": rng.choice(titles),
+                            "description": rng.choice(descriptions),
+                            "completed": rng.choice([True, False]),
+                            "user_id": all_user_ids[
+                                absolute_offset % len(all_user_ids)
+                            ],
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
+
+                # Perform bulk insert
+                await session.execute(insert(Todo), todos_batch)
+                await session.commit()
+
+                batch_elapsed = time.time() - batch_started_at
+                inserted_count = min((batch_idx + 1) * TODO_BATCH_SIZE, todos_to_create)
+                print(
+                    f"Batch {batch_idx + 1}/{total_batches} "
+                    f"inserted ({inserted_count} new, "
+                    f"{todo_count + inserted_count} total). "
+                    f"Time: {batch_elapsed:.2f}s"
+                )
 
     end_time = time.time()
     print(f"Database seeding completed in {end_time - start_time:.2f} seconds.")
