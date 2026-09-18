@@ -13,11 +13,13 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 os.environ["JWT_SECRET"] = "test-only-jwt-secret-not-for-production"
 
-from app.api.deps import get_redis
-from app.core.security import create_access_token
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import app
+# These imports initialize settings and the default engine, so the test environment
+# must be configured first.
+from app.api.deps import get_redis  # noqa: E402
+from app.core.security import create_access_token  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.session import get_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_maker = async_sessionmaker(
