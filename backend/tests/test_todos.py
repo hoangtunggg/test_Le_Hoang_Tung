@@ -79,6 +79,115 @@ async def test_update_todo(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_completed_can_toggle_from_false_to_true_and_back(client: AsyncClient):
+    token = await get_auth_token(client, "toggle-completed@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Toggle completion", "description": "Keep me"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+
+    completed = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"completed": True},
+        headers=headers,
+    )
+    completed_read = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+    active = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"completed": False},
+        headers=headers,
+    )
+    active_read = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+
+    assert completed.status_code == 200
+    assert completed.json()["completed"] is True
+    assert completed_read.json()["completed"] is True
+    assert active.status_code == 200
+    assert active.json()["completed"] is False
+    assert active_read.json()["completed"] is False
+
+
+@pytest.mark.asyncio
+async def test_title_only_update_preserves_description(client: AsyncClient):
+    token = await get_auth_token(client, "preserve-description@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Original title", "description": "Original description"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+
+    updated = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"title": "Updated title"},
+        headers=headers,
+    )
+    persisted = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Updated title"
+    assert updated.json()["description"] == "Original description"
+    assert persisted.json()["title"] == "Updated title"
+    assert persisted.json()["description"] == "Original description"
+
+
+@pytest.mark.asyncio
+async def test_empty_update_preserves_all_fields(client: AsyncClient):
+    token = await get_auth_token(client, "omitted-update@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Unchanged", "description": "Still present"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+    await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"completed": True},
+        headers=headers,
+    )
+
+    updated = await client.put(f"/api/v1/todos/{todo_id}", json={}, headers=headers)
+    persisted = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+    expected = {
+        "title": "Unchanged",
+        "description": "Still present",
+        "completed": True,
+    }
+
+    assert updated.status_code == 200
+    assert {field: updated.json()[field] for field in expected} == expected
+    assert {field: persisted.json()[field] for field in expected} == expected
+
+
+@pytest.mark.asyncio
+async def test_explicit_null_description_clears_description(client: AsyncClient):
+    token = await get_auth_token(client, "clear-description@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Clear description", "description": "Remove me"},
+        headers=headers,
+    )
+    todo_id = created.json()["id"]
+
+    updated = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"description": None},
+        headers=headers,
+    )
+    persisted = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+
+    assert updated.status_code == 200
+    assert updated.json()["description"] is None
+    assert persisted.json()["description"] is None
+
+
+@pytest.mark.asyncio
 async def test_delete_todo(client: AsyncClient):
     """Test deleting a todo."""
     token = await get_auth_token(client, "delete@example.com")
