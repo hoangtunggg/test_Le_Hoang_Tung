@@ -45,6 +45,9 @@ cd fabbi
 # Copy environment variables
 cp .env.example .env
 
+# Replace every replace_with_* placeholder. Generate independent secrets with:
+openssl rand -hex 32
+
 # Start all services
 docker-compose up --build
 
@@ -61,6 +64,19 @@ The application will be available at:
   - Email: `demo@test.com`
   - Password: `Demo@123`
 
+PostgreSQL and Redis are exposed to the host on loopback only. Redis requires
+the password configured in `.env`. Compose injects operational secrets at
+container runtime; they are not baked into either application image.
+
+The former operational environment files were tracked historically. Removing
+them from the current tree does not erase earlier Git revisions, so rotate any
+credential that was used outside local development.
+
+PostgreSQL applies its initialization variables only when creating a new data
+directory. For an existing `postgres_data` volume, update the database role and
+database to match `.env`; alternatively, recreate the volume only when its local
+data is disposable.
+
 By default the seed command creates 100 users and 1,000 TODOs so the assessment is quick to set up. To test performance with a larger dataset, pass seed variables explicitly:
 
 ```bash
@@ -76,6 +92,9 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate.bat
 pip install -r requirements.txt
+cp .env.example .env
+
+# Replace the placeholders with the credentials used by local PostgreSQL/Redis.
 
 # Start PostgreSQL and Redis locally, then run migrations and seed data:
 alembic upgrade head
@@ -90,6 +109,7 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend
 npm install
+cp .env.example .env
 npm run dev
 ```
 
@@ -162,6 +182,6 @@ docker compose exec -e SEED_USERS=10000 -e SEED_TODOS=1000000 backend python -m 
 ```
 Connect to PostgreSQL container to run `EXPLAIN ANALYZE`:
 ```bash
-docker compose exec postgres psql -U fabbi -d postgres
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 

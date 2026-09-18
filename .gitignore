@@ -6,8 +6,9 @@ venv/
 .venv/
 
 # Environment
-# .env
-*.env.local
+.env
+.env.*
+!.env.example
 
 # IDE
 .vscode/

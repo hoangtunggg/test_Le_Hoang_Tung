@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Use SQLite for tests before app modules initialize their default engine.
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+os.environ["JWT_SECRET"] = "test-only-jwt-secret-not-for-production"
 
 from app.api.deps import get_redis
 from app.core.security import create_access_token
