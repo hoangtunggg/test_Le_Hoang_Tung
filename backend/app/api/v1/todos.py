@@ -23,6 +23,10 @@ router = APIRouter()
 CACHE_TTL = 300  # 5 minutes
 
 
+def todo_list_cache_key(user_id: uuid.UUID, page: int, size: int) -> str:
+    return f"todos:list:user:{user_id}:page:{page}:size:{size}"
+
+
 @router.get("", response_model=TodoListResponse)
 async def list_todos(
     page: int = Query(1, ge=1),
@@ -34,7 +38,7 @@ async def list_todos(
     """Get paginated list of todos."""
     skip = (page - 1) * size
 
-    cache_key = "todos:list"
+    cache_key = todo_list_cache_key(current_user.id, page, size)
 
     # Try to get from cache
     cached = await redis.get(cache_key)

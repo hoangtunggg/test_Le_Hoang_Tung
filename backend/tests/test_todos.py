@@ -193,3 +193,60 @@ async def test_non_owner_cannot_read_update_or_delete_todos(client: AsyncClient)
     for todo_id in todo_ids:
         owner_read = await client.get(f"/api/v1/todos/{todo_id}", headers=owner_headers)
         assert owner_read.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_todo_list_cache_is_isolated_by_user(client: AsyncClient):
+    """A cached list for one user must never be served to another user."""
+    user_a_token = await get_auth_token(client, "cache-user-a@example.com")
+    user_b_token = await get_auth_token(client, "cache-user-b@example.com")
+    user_a_headers = {"Authorization": f"Bearer {user_a_token}"}
+    user_b_headers = {"Authorization": f"Bearer {user_b_token}"}
+
+    await client.post(
+        "/api/v1/todos", json={"title": "User A todo"}, headers=user_a_headers
+    )
+    await client.post(
+        "/api/v1/todos", json={"title": "User B todo"}, headers=user_b_headers
+    )
+
+    user_a_list = await client.get("/api/v1/todos", headers=user_a_headers)
+    user_b_list = await client.get("/api/v1/todos", headers=user_b_headers)
+
+    assert [item["title"] for item in user_a_list.json()["items"]] == ["User A todo"]
+    assert [item["title"] for item in user_b_list.json()["items"]] == ["User B todo"]
+
+
+@pytest.mark.asyncio
+async def test_todo_list_cache_is_isolated_by_page(client: AsyncClient):
+    """A cached first page must not be reused for a later page."""
+    token = await get_auth_token(client, "cache-pages@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    for title in ("First todo", "Second todo"):
+        await client.post("/api/v1/todos", json={"title": title}, headers=headers)
+
+    page_one = await client.get("/api/v1/todos?page=1&size=1", headers=headers)
+    page_two = await client.get("/api/v1/todos?page=2&size=1", headers=headers)
+
+    assert page_one.json()["page"] == 1
+    assert page_two.json()["page"] == 2
+    assert page_one.json()["items"][0]["id"] != page_two.json()["items"][0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_todo_list_cache_is_isolated_by_page_size(client: AsyncClient):
+    """Responses cached at one page size must not alias another size."""
+    token = await get_auth_token(client, "cache-sizes@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    for index in range(3):
+        await client.post(
+            "/api/v1/todos", json={"title": f"Todo {index}"}, headers=headers
+        )
+
+    size_one = await client.get("/api/v1/todos?page=1&size=1", headers=headers)
+    size_two = await client.get("/api/v1/todos?page=1&size=2", headers=headers)
+
+    assert size_one.json()["size"] == 1
+    assert len(size_one.json()["items"]) == 1
+    assert size_two.json()["size"] == 2
+    assert len(size_two.json()["items"]) == 2

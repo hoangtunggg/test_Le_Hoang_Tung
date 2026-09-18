@@ -1,7 +1,6 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -51,25 +50,44 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-def override_get_redis():
-    mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock()
-    mock_redis.delete = AsyncMock()
-    return mock_redis
+class InMemoryRedis:
+    """Minimal Redis test double that persists for one test."""
+
+    def __init__(self):
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.data[key] = value
+
+    async def delete(self, key: str) -> None:
+        self.data.pop(key, None)
+
+    async def exists(self, key: str) -> bool:
+        return key in self.data
 
 
 app.dependency_overrides[get_db] = override_get_db
-app.dependency_overrides[get_redis] = override_get_redis
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as ac:
-        yield ac
+def redis_client() -> InMemoryRedis:
+    return InMemoryRedis()
+
+
+@pytest.fixture
+async def client(redis_client: InMemoryRedis) -> AsyncGenerator[AsyncClient, None]:
+    app.dependency_overrides[get_redis] = lambda: redis_client
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.pop(get_redis, None)
 
 
 @pytest.fixture
