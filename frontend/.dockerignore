@@ -1,0 +1,48 @@
+# Version-control metadata
+.git/
+.gitignore
+.gitattributes
+
+# Installed dependencies and generated build output
+node_modules/
+**/node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Test, coverage, and browser-run artifacts
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+screenshots/
+videos/
+traces/
+trace.zip
+*.webm
+
+# Tool caches and logs
+.cache/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+tmp/
+temp/
+
+# Local environment files; retain distributable examples
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
