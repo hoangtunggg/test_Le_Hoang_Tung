@@ -23,6 +23,59 @@ async def test_register_success(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_registration_rejects_password_below_minimum(client: AsyncClient):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "short-password@example.com", "password": "12345"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_registration_accepts_72_byte_password(client: AsyncClient):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "max-password@example.com", "password": "a" * 72},
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_distinct_overlong_passwords_are_rejected_before_bcrypt(
+    client: AsyncClient,
+):
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "long-password@example.com", "password": "a" * 72 + "x"},
+    )
+    alternate_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "long-password@example.com", "password": "a" * 72 + "y"},
+    )
+
+    assert (registration.status_code, alternate_login.status_code) == (422, 422)
+
+
+@pytest.mark.asyncio
+async def test_registration_validates_multibyte_password_by_utf8_bytes(
+    client: AsyncClient,
+):
+    boundary_response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "multibyte-max@example.com", "password": "界" * 24},
+    )
+    over_limit_response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "multibyte-long@example.com", "password": "界" * 25},
+    )
+
+    assert boundary_response.status_code == 201
+    assert over_limit_response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_login_success(client: AsyncClient):
     """Test successful login after registration."""
     # Register first
