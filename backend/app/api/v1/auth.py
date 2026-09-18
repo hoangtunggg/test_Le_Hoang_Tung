@@ -81,9 +81,9 @@ async def refresh_token(
     redis: RedisClient = Depends(get_redis),
 ):
     """Refresh access token using refresh token."""
-    payload = verify_token(request.refresh_token)
+    payload = verify_token(request.refresh_token, expected_type="refresh")
 
-    if payload is None or payload.get("type") != "refresh":
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",

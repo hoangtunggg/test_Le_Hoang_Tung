@@ -18,7 +18,7 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     token = credentials.credentials
-    payload = verify_token(token)
+    payload = verify_token(token, expected_type="access")
 
     if payload is None:
         raise HTTPException(
