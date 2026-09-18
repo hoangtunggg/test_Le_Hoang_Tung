@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearAuthSession } from "./authSession.js";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -28,8 +29,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
+      clearAuthSession();
       window.location.href = "/login";
     }
     return Promise.reject(error);
