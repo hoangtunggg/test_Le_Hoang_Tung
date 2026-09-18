@@ -120,3 +120,76 @@ async def test_get_single_todo(client: AsyncClient):
     assert response.status_code == 200
     data = response.json()
     assert data["title"] == "Single Todo"
+
+
+@pytest.mark.asyncio
+async def test_owner_can_read_update_and_delete_own_todo(client: AsyncClient):
+    """An authenticated owner retains full access to their own todo."""
+    token = await get_auth_token(client, "ownership-owner@example.com")
+    headers = {"Authorization": f"Bearer {token}"}
+    created = await client.post(
+        "/api/v1/todos",
+        json={"title": "Owner todo", "description": "Private"},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    todo_id = created.json()["id"]
+
+    read = await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+    assert read.status_code == 200
+    assert read.json()["id"] == todo_id
+
+    updated = await client.put(
+        f"/api/v1/todos/{todo_id}",
+        json={"title": "Owner updated"},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Owner updated"
+
+    deleted = await client.delete(f"/api/v1/todos/{todo_id}", headers=headers)
+    assert deleted.status_code == 204
+    assert (
+        await client.get(f"/api/v1/todos/{todo_id}", headers=headers)
+    ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_non_owner_cannot_read_update_or_delete_todos(client: AsyncClient):
+    """A foreign todo must be indistinguishable from a nonexistent resource."""
+    owner_token = await get_auth_token(client, "ownership-a@example.com")
+    other_token = await get_auth_token(client, "ownership-b@example.com")
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+
+    todo_ids = []
+    for operation in ("read", "update", "delete"):
+        created = await client.post(
+            "/api/v1/todos",
+            json={"title": f"Private {operation}"},
+            headers=owner_headers,
+        )
+        assert created.status_code == 201
+        todo_ids.append(created.json()["id"])
+
+    foreign_read = await client.get(
+        f"/api/v1/todos/{todo_ids[0]}", headers=other_headers
+    )
+    foreign_update = await client.put(
+        f"/api/v1/todos/{todo_ids[1]}",
+        json={"title": "Unauthorized update"},
+        headers=other_headers,
+    )
+    foreign_delete = await client.delete(
+        f"/api/v1/todos/{todo_ids[2]}", headers=other_headers
+    )
+
+    assert {
+        "read": foreign_read.status_code,
+        "update": foreign_update.status_code,
+        "delete": foreign_delete.status_code,
+    } == {"read": 404, "update": 404, "delete": 404}
+
+    for todo_id in todo_ids:
+        owner_read = await client.get(f"/api/v1/todos/{todo_id}", headers=owner_headers)
+        assert owner_read.status_code == 200
