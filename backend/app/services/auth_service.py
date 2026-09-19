@@ -7,6 +7,8 @@ from app.core.security import get_password_hash, verify_password
 from app.models.user import User
 from app.schemas.user import UserCreate
 
+DUMMY_PASSWORD_HASH = "$2b$12$zWXKIVekVfVA826RnQh5heelJjJpF4FamX.qyntytCH3jQlXswK/S"
+
 
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     result = await db.execute(select(User).where(User.email == email))
@@ -32,8 +34,9 @@ async def create_user(db: AsyncSession, user_data: UserCreate) -> User:
 
 async def authenticate_user(db: AsyncSession, email: str, password: str) -> User | None:
     user = await get_user_by_email(db, email)
-    if not user:
-        return None
-    if not verify_password(password, user.hashed_password):
+    password_hash = user.hashed_password if user is not None else DUMMY_PASSWORD_HASH
+    password_is_valid = verify_password(password, password_hash)
+
+    if user is None or not password_is_valid:
         return None
     return user

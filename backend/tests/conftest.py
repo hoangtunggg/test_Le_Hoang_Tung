@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock
+from fnmatch import fnmatchcase
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,12 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Use SQLite for tests before app modules initialize their default engine.
 TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
+os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+os.environ["JWT_SECRET"] = "test-only-jwt-secret-not-for-production"
 
-from app.api.deps import get_redis
-from app.core.security import create_access_token
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import app
+# These imports initialize settings and the default engine, so the test environment
+# must be configured first.
+from app.api.deps import get_redis  # noqa: E402
+from app.core.security import create_access_token  # noqa: E402
+from app.db.base import Base  # noqa: E402
+from app.db.session import get_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 test_session_maker = async_sessionmaker(
@@ -51,25 +55,52 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-def override_get_redis():
-    mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock()
-    mock_redis.delete = AsyncMock()
-    return mock_redis
+class InMemoryRedis:
+    """Minimal Redis test double that persists for one test."""
+
+    def __init__(self):
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.data.get(key)
+
+    async def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.data[key] = value
+
+    async def delete(self, *keys: str) -> int:
+        deleted = 0
+        for key in keys:
+            if self.data.pop(key, None) is not None:
+                deleted += 1
+        return deleted
+
+    async def delete_pattern(self, pattern: str) -> int:
+        keys = [key for key in self.data if fnmatchcase(key, pattern)]
+        return await self.delete(*keys)
+
+    async def exists(self, key: str) -> bool:
+        return key in self.data
 
 
 app.dependency_overrides[get_db] = override_get_db
-app.dependency_overrides[get_redis] = override_get_redis
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as ac:
-        yield ac
+def redis_client() -> InMemoryRedis:
+    return InMemoryRedis()
+
+
+@pytest.fixture
+async def client(redis_client: InMemoryRedis) -> AsyncGenerator[AsyncClient, None]:
+    app.dependency_overrides[get_redis] = lambda: redis_client
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+    finally:
+        app.dependency_overrides.pop(get_redis, None)
 
 
 @pytest.fixture

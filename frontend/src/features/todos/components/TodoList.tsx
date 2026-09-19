@@ -3,15 +3,21 @@ import { TodoItem } from "./TodoItem";
 import { TodoForm } from "./TodoForm";
 import type { Todo } from "../api/todos";
 import { useDeleteTodo, useToggleTodo } from "../api/todos";
+import { useAttachTag } from "../api/todos";
+import { useTags } from "@/features/tags/api/tags";
 
 interface TodoListProps {
   todos: Todo[];
+  selectedIds: string[];
+  onSelectionChange: (ids: string[]) => void;
 }
 
-export function TodoList({ todos }: TodoListProps) {
+export function TodoList({ todos, selectedIds, onSelectionChange }: TodoListProps) {
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const deleteTodo = useDeleteTodo();
   const toggleTodo = useToggleTodo();
+  const attachTag = useAttachTag();
+  const { data: tags = [] } = useTags();
 
   const handleToggle = (todo: Todo) => {
     toggleTodo.mutate(todo);
@@ -37,14 +43,17 @@ export function TodoList({ todos }: TodoListProps) {
   return (
     <>
       <div className="space-y-2">
-        {todos.map((todo, index) => (
+        {todos.map((todo) => (
           <TodoItem
-            key={index}
+            key={todo.id}
             todo={todo}
-            index={index}
             onToggle={handleToggle}
             onEdit={handleEdit}
             onDelete={handleDelete}
+            selected={selectedIds.includes(todo.id)}
+            onSelect={(selected) => onSelectionChange(selected ? [...selectedIds, todo.id] : selectedIds.filter((id) => id !== todo.id))}
+            availableTags={tags}
+            onAttach={(tagId) => attachTag.mutate({ todoId: todo.id, tagId })}
           />
         ))}
       </div>

@@ -1,7 +1,11 @@
 """Auth tests."""
 
+from datetime import timedelta
+
 import pytest
 from httpx import AsyncClient
+
+from app.core.security import create_access_token
 
 
 @pytest.mark.asyncio
@@ -16,6 +20,59 @@ async def test_register_success(client: AsyncClient):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_registration_rejects_password_below_minimum(client: AsyncClient):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "short-password@example.com", "password": "12345"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_registration_accepts_72_byte_password(client: AsyncClient):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "max-password@example.com", "password": "a" * 72},
+    )
+
+    assert response.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_distinct_overlong_passwords_are_rejected_before_bcrypt(
+    client: AsyncClient,
+):
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "long-password@example.com", "password": "a" * 72 + "x"},
+    )
+    alternate_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "long-password@example.com", "password": "a" * 72 + "y"},
+    )
+
+    assert (registration.status_code, alternate_login.status_code) == (422, 422)
+
+
+@pytest.mark.asyncio
+async def test_registration_validates_multibyte_password_by_utf8_bytes(
+    client: AsyncClient,
+):
+    boundary_response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "multibyte-max@example.com", "password": "界" * 24},
+    )
+    over_limit_response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "multibyte-long@example.com", "password": "界" * 25},
+    )
+
+    assert boundary_response.status_code == 201
+    assert over_limit_response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -36,6 +93,30 @@ async def test_login_success(client: AsyncClient):
     data = response.json()
     assert "access_token" in data
     assert "refresh_token" in data
+
+
+@pytest.mark.asyncio
+async def test_login_failure_does_not_disclose_account_existence(client: AsyncClient):
+    """Unknown accounts and incorrect passwords have equivalent responses."""
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": "known-login@example.com", "password": "password123"},
+    )
+
+    unknown_account = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "unknown-login@example.com", "password": "wrong-password"},
+    )
+    incorrect_password = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "known-login@example.com", "password": "wrong-password"},
+    )
+
+    unknown_result = (unknown_account.status_code, unknown_account.json())
+    incorrect_result = (incorrect_password.status_code, incorrect_password.json())
+    expected_result = (401, {"detail": "Invalid email or password"})
+
+    assert unknown_result == incorrect_result == expected_result
 
 
 @pytest.mark.asyncio
@@ -75,3 +156,128 @@ async def test_logout(client: AsyncClient):
     )
     assert response.status_code == 200
     assert response.json()["message"] == "Successfully logged out"
+
+
+@pytest.mark.asyncio
+async def test_valid_access_token_is_accepted(client: AsyncClient):
+    """A current access token authenticates an access-protected endpoint."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "valid-access@example.com", "password": "password123"},
+    )
+
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {registration.json()['access_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "valid-access@example.com"
+
+
+@pytest.mark.asyncio
+async def test_expired_access_token_is_rejected(client: AsyncClient):
+    """An expired access token cannot authenticate a request."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "expired-access@example.com", "password": "password123"},
+    )
+    current_user = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {registration.json()['access_token']}"},
+    )
+    expired_token = create_access_token(
+        data={"sub": current_user.json()["id"]},
+        expires_delta=timedelta(seconds=-1),
+    )
+
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {expired_token}"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_tampered_access_token_is_rejected(client: AsyncClient):
+    """A token with a modified signature remains invalid."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "tampered-access@example.com", "password": "password123"},
+    )
+    header, payload, signature = registration.json()["access_token"].split(".")
+    replacement = "A" if signature[0] != "A" else "B"
+    tampered_token = f"{header}.{payload}.{replacement}{signature[1:]}"
+
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {tampered_token}"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_malformed_access_token_is_rejected(client: AsyncClient):
+    """A value that is not a JWT remains invalid."""
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": "Bearer not-a-jwt"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_is_rejected_by_access_endpoint(client: AsyncClient):
+    """A refresh token cannot authenticate an access-protected endpoint."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "refresh-as-access@example.com", "password": "password123"},
+    )
+
+    response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {registration.json()['refresh_token']}"},
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_valid_refresh_token_is_accepted_by_refresh_flow(client: AsyncClient):
+    """A current refresh token can issue a new usable access token."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "valid-refresh@example.com", "password": "password123"},
+    )
+
+    refresh_response = await client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": registration.json()["refresh_token"]},
+    )
+    me_response = await client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {refresh_response.json()['access_token']}"},
+    )
+
+    assert refresh_response.status_code == 200
+    assert me_response.status_code == 200
+    assert me_response.json()["email"] == "valid-refresh@example.com"
+
+
+@pytest.mark.asyncio
+async def test_access_token_is_rejected_by_refresh_flow(client: AsyncClient):
+    """An access token cannot be exchanged by the refresh-only endpoint."""
+    registration = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "access-as-refresh@example.com", "password": "password123"},
+    )
+
+    response = await client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": registration.json()["access_token"]},
+    )
+
+    assert response.status_code == 401

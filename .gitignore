@@ -6,8 +6,9 @@ venv/
 .venv/
 
 # Environment
-# .env
-*.env.local
+.env
+.env.*
+!.env.example
 
 # IDE
 .vscode/
@@ -31,5 +32,3 @@ docs/ANSWER_KEY.md
 # OS
 .DS_Store
 Thumbs.db
-
-docs/
