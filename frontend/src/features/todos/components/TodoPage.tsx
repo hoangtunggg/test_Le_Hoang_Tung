@@ -3,14 +3,20 @@ import { Plus, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { useTodos } from "../api/todos";
+import { useBulkStatus, useTodos, type TodoFilters as Filters } from "../api/todos";
 import { TodoList } from "./TodoList";
 import { TodoForm } from "./TodoForm";
 import { useAuth } from "@/features/auth/hooks/useAuth";
+import { TagManager } from "@/features/tags/components/TagManager";
+import { TodoFilters } from "./TodoFilters";
 
 export function TodoPage() {
+  const emptyTodoFilters: Filters = { status: "all", tag_id: "", keyword: "", date_from: "", date_to: "", page: 1, page_size: 20 };
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const { data, isLoading, error } = useTodos();
+  const [filters, setFilters] = useState<Filters>(emptyTodoFilters);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const { data, isLoading, error } = useTodos(filters);
+  const bulkStatus = useBulkStatus();
   const { user, logout } = useAuth();
 
   return (
@@ -43,6 +49,8 @@ export function TodoPage() {
           </CardHeader>
           <Separator />
           <CardContent className="pt-4">
+            <TodoFilters filters={filters} onChange={setFilters} />
+            {selectedIds.length > 0 && <div className="mb-3 flex gap-2"><Button size="sm" onClick={() => bulkStatus.mutate({ todo_ids: selectedIds, completed: true }, { onSuccess: () => setSelectedIds([]) })}>Mark completed</Button><Button size="sm" variant="outline" onClick={() => bulkStatus.mutate({ todo_ids: selectedIds, completed: false }, { onSuccess: () => setSelectedIds([]) })}>Mark active</Button></div>}
             {isLoading && (
               <div className="text-center py-12 text-muted-foreground">
                 Loading todos...
@@ -55,13 +63,14 @@ export function TodoPage() {
               </div>
             )}
 
-            {data && <TodoList todos={data.items} />}
+            {data && <TodoList todos={data.items} selectedIds={selectedIds} onSelectionChange={setSelectedIds} />}
 
             {data && data.total > 0 && (
               <div className="mt-4 text-center text-sm text-muted-foreground">
                 Showing {data.items.length} of {data.total} todos
               </div>
             )}
+            <TagManager />
           </CardContent>
         </Card>
       </main>

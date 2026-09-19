@@ -1,6 +1,6 @@
 import { queryClient } from "./queryClient.js";
 
-export const USER_SCOPED_QUERY_KEYS = [["currentUser"], ["todos"]] as const;
+export const USER_SCOPED_QUERY_KEYS = [["currentUser"], ["todos"], ["tags"]] as const;
 
 interface AuthTokens {
   access_token: string;

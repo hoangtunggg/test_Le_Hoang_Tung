@@ -27,6 +27,7 @@ function seedUserAData(): void {
     email: "user-a@example.com",
   });
   queryClient.setQueryData(["todos"], [{ id: "todo-a", title: "Private" }]);
+  queryClient.setQueryData(["tags"], [{ id: "tag-a", name: "Private" }]);
 }
 
 describe("authentication session cache boundaries", () => {
@@ -54,6 +55,7 @@ describe("authentication session cache boundaries", () => {
     expect(localStorage.getItem("refresh_token")).toBeNull();
     expect(queryClient.getQueryData(["currentUser"])).toBeUndefined();
     expect(queryClient.getQueryData(["todos"])).toBeUndefined();
+    expect(queryClient.getQueryData(["tags"])).toBeUndefined();
     expect(queryClient.getQueryData(["publicReference"])).toEqual({
       retained: true,
     });
@@ -71,6 +73,7 @@ describe("authentication session cache boundaries", () => {
 
     expect(queryClient.getQueryData(["currentUser"])).toBeUndefined();
     expect(queryClient.getQueryData(["todos"])).toBeUndefined();
+    expect(queryClient.getQueryData(["tags"])).toBeUndefined();
     expect(localStorage.getItem("access_token")).toBe("user-b-access");
     expect(localStorage.getItem("refresh_token")).toBe("user-b-refresh");
   });
@@ -92,6 +95,7 @@ describe("authentication session cache boundaries", () => {
     expect(localStorage.getItem("refresh_token")).toBeNull();
     expect(queryClient.getQueryData(["currentUser"])).toBeUndefined();
     expect(queryClient.getQueryData(["todos"])).toBeUndefined();
+    expect(queryClient.getQueryData(["tags"])).toBeUndefined();
     expect(window.location.href).toBe("/login");
   });
 });
