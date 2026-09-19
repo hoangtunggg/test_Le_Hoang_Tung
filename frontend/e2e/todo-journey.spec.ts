@@ -24,7 +24,7 @@ test("registered user can create, complete, persist, and log out of a todo", asy
   await createDialog.getByLabel("Title").fill(todoTitle);
   await createDialog.getByRole("button", { name: "Create" }).click();
 
-  const todoCheckbox = page.getByRole("checkbox", { name: todoTitle });
+  const todoCheckbox = page.getByRole("checkbox", { name: todoTitle, exact: true });
   await expect(todoCheckbox).toBeVisible();
   await expect(todoCheckbox).not.toBeChecked();
 
@@ -39,7 +39,7 @@ test("registered user can create, complete, persist, and log out of a todo", asy
   expect(updateResponse.ok()).toBe(true);
 
   await page.reload();
-  await expect(page.getByRole("checkbox", { name: todoTitle })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: todoTitle, exact: true })).toBeChecked();
 
   await page.getByRole("button", { name: "Logout" }).click();
   await expect(page).toHaveURL(/\/login$/);

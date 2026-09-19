@@ -34,7 +34,7 @@ test("private todo is isolated between independent user sessions", async ({
     await createDialog.getByRole("button", { name: "Create" }).click();
 
     await expect(
-      pageA.getByRole("checkbox", { name: privateTodoTitle }),
+      pageA.getByRole("checkbox", { name: privateTodoTitle, exact: true }),
     ).toBeVisible();
 
     await registerUser(pageB, userBEmail, password);
@@ -43,7 +43,7 @@ test("private todo is isolated between independent user sessions", async ({
 
     await expect(pageA.getByText(userAEmail, { exact: true })).toBeVisible();
     await expect(
-      pageA.getByRole("checkbox", { name: privateTodoTitle }),
+      pageA.getByRole("checkbox", { name: privateTodoTitle, exact: true }),
     ).toBeVisible();
 
     const userAToken = await pageA.evaluate(() =>
